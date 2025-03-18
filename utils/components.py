@@ -6,10 +6,8 @@ from kfp import dsl
 from kfp.kubernetes import use_config_map_as_volume
 
 from .consts import (
-    JUDGE_CONFIG_MAP,
     RHELAI_IMAGE,
     RUNTIME_GENERIC_IMAGE,
-    TEACHER_CONFIG_MAP,
     TOOLBOX_IMAGE,
 )
 
@@ -309,16 +307,14 @@ def ilab_importer_op(repository: str, release: str, base_model: dsl.Output[dsl.M
     )
 
 
-@dsl.component(base_image=RUNTIME_GENERIC_IMAGE)
+@dsl.component(base_image=RUNTIME_GENERIC_IMAGE, install_kfp_package=False)
 def test_model_connection(secret_name: str):
     import base64
-    import json
-    import os
     import sys
     import textwrap
     import time
 
-    import requests
+    import httpx
     from kubernetes import client, config
     from kubernetes.client.rest import ApiException
 
@@ -355,13 +351,14 @@ def test_model_connection(secret_name: str):
         "model": model_name,
         "messages": [{"role": "user", "content": "tell me a funny joke."}],
     }
+    # httpx uses the SSL_CERT_FILE and SSL_CERT_DIR environment variables by default if provided.
+    http_client = httpx.Client()
     # Make 3 attempts
     for i in range(1, 3):
-        resp = requests.post(
+        resp = http_client.post(
             f"{model_endpoint}/chat/completions",
             headers=request_auth,
-            data=json.dumps(request_body),
-            verify=os.environ["SDG_CA_CERT_PATH"],
+            json=request_body,
         )
         if resp.status_code != 200:
             print(f"Model Server {model_name} is not available. Attempt {i}/3...")
@@ -386,7 +383,7 @@ def test_model_connection(secret_name: str):
 
 
 # sdg_num_workers directly maps to num_cpus in the SDG phase of InstructLab
-@dsl.component(base_image=RUNTIME_GENERIC_IMAGE)
+@dsl.component(base_image=RUNTIME_GENERIC_IMAGE, install_kfp_package=False)
 def test_sdg_params(sdg_batch_size: int, sdg_num_workers: int):
     import sys
     import textwrap
@@ -419,7 +416,7 @@ def test_sdg_params(sdg_batch_size: int, sdg_num_workers: int):
     )
 
 
-@dsl.component(base_image=RUNTIME_GENERIC_IMAGE)
+@dsl.component(base_image=RUNTIME_GENERIC_IMAGE, install_kfp_package=False)
 def test_model_registry(
     model_registry_endpoint: Optional[str],
     model_name: Optional[str],
@@ -505,7 +502,7 @@ def test_model_registry(
         raise
 
 
-@dsl.component(base_image=RUNTIME_GENERIC_IMAGE)
+@dsl.component(base_image=RUNTIME_GENERIC_IMAGE, install_kfp_package=False)
 def test_training_operator():
     import sys
     import textwrap
@@ -548,7 +545,7 @@ def test_training_operator():
             sys.exit(1)
 
 
-@dsl.component(base_image=RUNTIME_GENERIC_IMAGE)
+@dsl.component(base_image=RUNTIME_GENERIC_IMAGE, install_kfp_package=False)
 def test_oci_model(output_oci_model_uri: str, output_oci_registry_secret: str):
     import base64
     import json
@@ -639,10 +636,7 @@ def test_taxonomy_repo(sdg_repo_url: str):
             set -x &&
 
             # Set Preferred CA Cert
-            if [ -s "$TAXONOMY_CA_CERT_PATH" ]; then
-                export GIT_SSL_NO_VERIFY=false
-                export GIT_SSL_CAINFO="$TAXONOMY_CA_CERT_PATH"
-            elif [ ! -z "$SSL_CERT_DIR" ]; then
+            if [ ! -z "$SSL_CERT_DIR" ]; then
                 export GIT_SSL_NO_VERIFY=false
                 export GIT_SSL_CAPATH="$SSL_CERT_DIR"
             elif [ -s "$SSL_CERT_FILE" ]; then
@@ -681,22 +675,10 @@ def prerequisites_check_op(
 
     ## Validate judge information
     test_judge_model_op = test_model_connection(secret_name=eval_judge_secret)
-    use_config_map_as_volume(
-        test_judge_model_op, JUDGE_CONFIG_MAP, mount_path="/tmp/cert"
-    )
-    test_judge_model_op.set_env_variable(
-        "SDG_CA_CERT_PATH", os.path.join("/tmp/cert", "ca.crt")
-    )
     test_judge_model_op.set_caching_options(False)
 
     ## Validate teacher information
     test_teacher_model_op = test_model_connection(secret_name=sdg_teacher_secret)
-    use_config_map_as_volume(
-        test_teacher_model_op, TEACHER_CONFIG_MAP, mount_path="/tmp/cert"
-    )
-    test_teacher_model_op.set_env_variable(
-        "SDG_CA_CERT_PATH", os.path.join("/tmp/cert", "ca.crt")
-    )
     test_teacher_model_op.set_caching_options(False)
 
     # Validate Model Registry configuration

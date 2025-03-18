@@ -24,7 +24,6 @@ def run_mt_bench_op(
     import os
     import subprocess
 
-    import httpx
     import requests
     import torch
     from instructlab.eval.mt_bench import MTBenchEvaluator
@@ -77,28 +76,6 @@ def run_mt_bench_op(
             judge_secret_name, ["api_token", "model_name", "endpoint"]
         )
         print("Eval Judge secret data retrieved.")
-
-    judge_ca_cert_path = os.getenv("JUDGE_CA_CERT_PATH")
-    dsp_ca_cert_path = os.getenv("SSL_CERT_FILE")
-    dsp_ca_cert_dir = os.getenv("SSL_CERT_DIR")
-
-    dsp_cert_dir_defined = dsp_ca_cert_dir is not None
-    dsp_ca_exists = (
-        dsp_ca_cert_path is not None
-        and os.path.isfile(dsp_ca_cert_path)
-        and (os.path.getsize(dsp_ca_cert_path) > 0)
-    )
-    judge_ca_exists = (
-        judge_ca_cert_path is not None
-        and os.path.isfile(judge_ca_cert_path)
-        and (os.path.getsize(judge_ca_cert_path) > 0)
-    )
-
-    use_tls = dsp_cert_dir_defined or dsp_ca_exists or judge_ca_exists
-
-    # Use Judge CA Cert if explicitly defined, otherwise use system default CA Certs
-    ca_cert_path = judge_ca_cert_path if judge_ca_exists else True
-    judge_http_client = httpx.Client(verify=ca_cert_path) if use_tls else None
 
     def launch_vllm(
         model_path: str, gpu_count: int, retries: int = 120, delay: int = 10
@@ -226,7 +203,6 @@ def run_mt_bench_op(
             server_url=vllm_server,
             serving_gpus=gpu_count,
             max_workers=max_workers,
-            http_client=judge_http_client,
         )
 
         shutdown_vllm(vllm_process)
@@ -236,7 +212,6 @@ def run_mt_bench_op(
             api_key=judge_api_key,
             serving_gpus=gpu_count,
             max_workers=max_workers,
-            http_client=judge_http_client,
         )
 
         mt_bench_data = {
